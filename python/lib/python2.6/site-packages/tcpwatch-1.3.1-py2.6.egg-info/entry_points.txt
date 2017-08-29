@@ -1,0 +1,3 @@
+[console_scripts]
+tcpwatch = tcpwatch:run_main
+

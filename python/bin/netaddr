@@ -1,0 +1,5 @@
+#!/opt/python/bin/python
+# EASY-INSTALL-SCRIPT: 'netaddr==0.7.11','netaddr'
+__requires__ = 'netaddr==0.7.11'
+import pkg_resources
+pkg_resources.run_script('netaddr==0.7.11', 'netaddr')

@@ -1,0 +1,176 @@
+#!/opt/python/bin/python
+from errno import EACCES
+from os.path import realpath
+from sys import argv, exit
+from threading import Lock
+
+import os, time, socket
+
+from fuse import FUSE, FuseOSError, Operations
+
+unix_socket = "/opt/python/app/monitorfs.sock"
+error_log = "/opt/python/app/monitorfs.err"
+sock = None
+failed = 0
+retry_interval = 10
+cache_list = {}
+max_list = 100
+max_delay = 5
+
+# m = modify; c = create; d = delete; r = rename; s = close
+def notify(path, operation, rename_path = None):
+	global sock, failed, fd_log
+	now = time.time()
+	if sock is None:
+		sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+		sock.setblocking(0)
+
+	if failed and now - failed < retry_interval:
+		return
+
+	# handling redudant write
+	if operation in  ['m','c']:
+		if len(cache_list) > max_list:
+			cache_list.clear()
+
+		if not path in cache_list:
+			cache_list[path] = now
+		elif now - cache_list[path] > max_delay:
+			cache_list[path] = now
+		else:
+			return
+	elif operation in ['d','r','s']:
+		if path in cache_list:
+			cache_list.pop(path)
+			if operation == 's': return		
+
+	error = False
+	try:
+		if rename_path:
+			data = "%s|%s|%s" % (operation, path, rename_path)
+		else:
+			data = "%s|%s" % (operation, path)
+		sock.sendto(data, unix_socket)
+		failed = 0
+	except Exception, err:
+		if err.errno == 111:
+			failed = time.time() # only connection refused
+		else: failed = 0
+		error = True
+
+	if error:
+		try:
+			fd = open(error_log,"a")
+			fd.write("%s\n" % err)
+			fd.close()
+		except Exception, err:
+			pass
+	
+
+class MonitorFS(Operations):    
+	def __init__(self, root):
+		self.root = realpath(root)
+		self.rwlock = Lock()
+    
+	def __call__(self, op, path, *args):
+		return super(MonitorFS, self).__call__(op, self.root + path, *args)
+    
+	def access(self, path, mode):
+		if not os.access(path, mode):
+			raise FuseOSError(EACCES)
+    
+	chmod = os.chmod
+	chown = os.chown
+    
+	def create(self, path, mode):
+		notify(path, 'c')
+		return os.open(path, os.O_WRONLY | os.O_CREAT, mode)
+    
+	def flush(self, path, fh):
+		return os.fsync(fh)
+
+	def fsync(self, path, datasync, fh):
+		return os.fsync(fh)
+                
+	def getattr(self, path, fh=None):
+		st = os.lstat(path)
+		return dict((key, getattr(st, key)) for key in ('st_atime', 'st_ctime',
+			'st_gid', 'st_mode', 'st_mtime', 'st_nlink', 'st_size', 'st_uid'))
+    
+	getxattr = None
+    
+	def link(self, target, source):
+		notify(target, 'c')
+		return os.link(source, target)
+    
+	listxattr = None
+
+	def mkdir(self, path, mode):
+		notify(path, 'c')
+		return os.mkdir(path, mode)
+	
+	def mknod(self, path, mode, dev):
+		notify(path, 'c')
+		return os.mknod(path, mode, dev)
+
+	def open(self, path,flag):
+		return os.open(path, flag | os.O_NDELAY)
+
+	def read(self, path, size, offset, fh):
+		with self.rwlock:
+			os.lseek(fh, offset, 0)
+			return os.read(fh, size)
+    
+	def readdir(self, path, fh):
+		return ['.', '..'] + os.listdir(path)
+
+	readlink = os.readlink
+    
+	def release(self, path, fh):
+		notify(path, 's')
+		return os.close(fh)
+        
+	def rename(self, old, new):
+		notify(old, 'r', self.root + new)
+		return os.rename(old, self.root + new)
+    
+	def rmdir(self, path):
+		notify(path, 'd')
+		return os.rmdir(path)
+    
+	def statfs(self, path):
+		stv = os.statvfs(path)
+		return dict((key, getattr(stv, key)) for key in ('f_bavail', 'f_bfree',
+			'f_blocks', 'f_bsize', 'f_favail', 'f_ffree', 'f_files', 'f_flag',
+			'f_frsize', 'f_namemax'))
+    
+	def symlink(self, target, source):
+		notify(target, 'c')
+		return os.symlink(source, target)
+    
+	def truncate(self, path, length, fh=None):
+		notify(path, 'm')
+		with open(path, 'r+') as f:
+			f.truncate(length)
+    
+	def unlink(self, path):
+		notify(path, 'd')
+		return os.unlink(path)
+	
+	utimens = os.utime
+    
+	def write(self, path, data, offset, fh):
+		notify(path, 'm')
+		with self.rwlock:
+			os.lseek(fh, offset, 0)
+			return os.write(fh, data)
+    
+
+if __name__ == "__main__":
+    if len(argv) != 3:
+        print 'usage: %s <root> <mountpoint>' % argv[0]
+        exit(1)
+    import psyco
+    psyco.full()
+    fuse = FUSE(MonitorFS(argv[1]), argv[2], foreground=True)
+    

@@ -1,0 +1,15 @@
+[funkload.plugins.monitor]
+MemFree = funkload.MonitorPluginsDefault:MonitorMemFree
+CUs = funkload.MonitorPluginsDefault:MonitorCUs
+CPU = funkload.MonitorPluginsDefault:MonitorCPU
+Network = funkload.MonitorPluginsDefault:MonitorNetwork
+
+[console_scripts]
+fl-record = funkload.Recorder:main
+fl-run-test = funkload.TestRunner:main
+fl-credential-ctl = funkload.CredentialFile:main
+fl-run-bench = funkload.BenchRunner:main
+fl-monitor-ctl = funkload.Monitor:main
+fl-install-demo = funkload.DemoInstaller:main
+fl-build-report = funkload.ReportBuilder:main
+

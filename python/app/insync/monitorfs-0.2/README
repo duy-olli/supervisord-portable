@@ -1,0 +1,111 @@
+!!!!!!!!!!!
+= WARNING =
+!!!!!!!!!!!
+
+nullfs is still under development. USE IT AT YOUR OWN RISK! A filesystem
+is a critical part of an operating system and filesystem bugs may lead
+to data loss. It is recommended that nullfs is _NOT_ used on any system
+where data loss is unacceptable.
+
+
+
+==============
+ ABOUT NULLFS
+==============
+
+nullfs is a pass-through stackable filesystem. When mounted on top of
+an existing filesystem, the existing filesystem should continue to be
+accessible without any problems.
+
+The purpose of nullfs is to verify that stackable filesystems are fully
+functional and reliable. Because nullfs does nothing except stack, it
+will be easier to identify and fix stacking issues.
+
+In the future, other stackable filesystems may use nullfs as an
+implementation reference.
+
+
+
+=========================
+ COMPILE / INSTALL / RUN
+=========================
+
+Below are brief instructions to get nullfs compiled and running on a
+system with a Linux 2.6.26 kernel. You may need to manually adjust
+the Makefile if you kernel sources are not in the default location.
+
+compile the kernel module
+  # make
+
+install the kernel module
+  # make nullfs_install
+
+load the kernel module
+  # modprobe nullfs
+
+verify that the module is loaded
+  # demsg | grep nullfs
+
+create a playground to test nullfs
+  # mkdir /tmp/nullfs_test
+
+mount nullfs over the playground
+  # mount -t nullfs /tmp/nullfs_test /tmp/nullfs_test
+
+verify that nullfs is mounted
+  # mount | grep nullfs
+
+
+
+=========
+ TESTING
+=========
+
+If data loss is acceptable, you may choose to mount nullfs on top of other
+directories. The important things to test are:
+
+   1. data loss is not occurring during changes on the filesystem
+
+   2. applications run normally
+
+If you notice that files are being corrupted or applications are producing
+unusual errors (or crashing), this is most likely due to a problem with
+nullfs and should be reported.
+
+Please report problems to the dazuko-devel mailing list
+(subscription required):
+     http://lists.nongnu.org/mailman/listinfo/dazuko-devel
+
+
+
+=======
+ NOTES
+=======
+
+It is possible to mount nullfs to a directory other than the directory that
+is being stacked upon. For example:
+
+# mount -t nullfs /usr/local/games /tmp/nullfs_test
+
+When accessing files within /tmp/nullfs_test, you will be actually accessing
+files in /usr/local/games (through nullfs). When accessing files directly
+in /usr/local/games, nullfs will not be involved.
+
+THIS HAS POTENTIAL PROBLEMS!
+
+If files are modified directly in /usr/local/games, the nullfs layer will
+not know about it. When nullfs later tries to access those files, it may
+result in corrupt data or kernel crashes. As long as /usr/local/games is
+ONLY modified through nullfs, there should not be any problems.
+
+
+
+==============
+ KNOWN ISSUES
+==============
+
+- nullfs version 0.0.4 does not support writing to memory mapped files. This
+  should not cause the kernel to crash, but will instead result in the
+  application failing to perform the writes (although mmap() will appear to
+  be successful from the application's viewpoint!).
+

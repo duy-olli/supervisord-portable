@@ -1,0 +1,18 @@
+#!/opt/python/bin/python
+
+import sys
+from os.path import join, dirname, exists
+
+# Use the local module if we are in the source tree.
+source_tree_path = join(dirname(__file__), "..", "lib", "platinfo.py")
+if exists(source_tree_path):
+    sys.path.insert(0, dirname(source_tree_path))
+    try:
+        from platinfo import main
+    finally:
+        del sys.path[0]
+else:
+    from platinfo import main
+
+if __name__ == "__main__":
+    sys.exit( main(sys.argv) )

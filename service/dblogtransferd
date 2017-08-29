@@ -1,0 +1,52 @@
+#!/opt/python/bin/python
+# -*- coding: utf-8 -*-
+
+import sys, os, signal, pwd, grp, optparse, time, shutil, socket, math
+
+openxconf = "/data/openx/var/openx.detik.com.conf.php"
+logfiles = ['ox_data_raw_ad_click','ox_data_raw_ad_impression']
+dbpath = {}
+hostname = ''
+
+def utctime():
+	tm=time.gmtime()
+	return '%04d%02d%02d%02d%d' % (tm[0],tm[1],tm[2],tm[3],math.floor(tm[4]/15))
+
+def dblogtransfer():
+	for lf in logfiles:
+		files = filter(lambda flname: flname.find(lf) != -1 and flname.split('.')[1]<utctime(), os.listdir(dbpath['dblogpath']))
+		files.sort()
+		for movingfile in files:
+			movingfilepathsrc=dbpath['dblogpath']+ '/' + movingfile
+			movingfilepathdst=dbpath['maindblogpath']+ '/' + movingfile + '.' + hostname
+			try:
+				sys.stdout.write(time.strftime('%Y/%m/%d %H:%M:%S',time.localtime()) + ' : Moving file ' + movingfilepathsrc + ' to ' + movingfilepathdst + ' : ')
+				shutil.copy(movingfilepathsrc,movingfilepathdst)
+			except IOError:
+				sys.stdout.write('Failed\n')
+			except OSError:
+				sys.stdout.write('Failed\n')
+			else:
+				sys.stdout.write('Success\n')
+				try:
+					os.unlink(movingfilepathsrc)
+				except IOError:
+					pass
+			
+if __name__ == "__main__":
+	if not os.path.exists(openxconf):
+		sys.exit('File ' + openxconf + ' doesn''t exists !!')
+		
+	dblog = filter(lambda line: line.find('dblogpath') != -1, open(openxconf))
+	for x in dblog:
+		dbpath[x.split('=')[0].strip()]=x.split('=')[1].strip()
+
+	if len(dbpath) < 2 :
+		sys.exit('Settings for either dblogpath and maindblogpath don''t exists in file ' + openxconf)
+
+	hostname = socket.gethostname()
+		
+        while True:
+                dblogtransfer()
+		sys.stdout.flush()
+                time.sleep(60)

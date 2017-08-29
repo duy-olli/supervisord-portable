@@ -1,0 +1,153 @@
+[mod_printonly]
+module = echo
+
+[mod_genstatic]
+module = generate_static
+server = gluster1
+
+[mod_webio]
+module = webio
+src-root-dir = /data/detikcom/baru
+dst-root-dirs = http://gluster1:10101 
+
+[mod_webio2]
+module = webio
+src-root-dir = /data/detikcom/baru/xml/detikcom/tpl
+dst-root-dirs = http://gluster1:10101/xml
+
+[mod_webio3]
+module = webio
+src-root-dir = /data/detikcom/baru/tpl
+dst-root-dirs = http://gluster1:10101/xml
+
+[mod_webionodel]
+module = webionodel
+src-root-dir = /data/detikcom/baru
+dst-root-dirs = http://gluster1:10101
+
+[mod_thumbnail]
+module = thumbnail
+src-root-dir = /data/detikcom/baru/images/content
+dst-root-dir = /data/detikcom/baru/images/thumbnail
+scale-percentage = 30
+
+# need to be uptodate (sinkron now)
+
+[tpl]
+watch-dirs = /data/detikcom/baru/xml/news/tpl
+queue-threshold-time = 10
+max-queued-items = 30
+triggers = mod_webio, mod_genstatic
+
+[image]
+watch-dirs = /data/detikcom/baru/images/content/{year}/{month}, /data/detikcom/baru/images/content/{year}/{month.minus1}
+queue-threshold-time = 10
+max-queued-items = 30
+triggers = mod_webio, mod_thumbnail
+
+[thumbnail]
+watch-dirs = /data/detikcom/baru/images/thumbnail/{year}/{month}, /data/detikcom/baru/images/thumbnail/{year}/{month.minus1}
+queue-threshold-time = 10
+max-queued-items = 30
+triggers = mod_webio
+
+[comment]
+watch-dirs = /data/detikcom/baru/xml/news/comments/{year}/{month}, /data/detikcom/baru/xml/news/comments/{year}/{month.minus1}
+queue-threshold-time = 30
+max-queued-items = 100
+triggers = mod_webio
+max-workers = 5
+
+[content]
+watch-dirs = /data/detikcom/baru/xml/news/content/{year}/{month}, /data/detikcom/baru/xml/news/content/{year}/{month.minus1}
+queue-threshold-time = 10
+max-queued-items = 30
+triggers = mod_webio
+
+[static]
+watch-dirs = /data/detikcom/baru/static
+exclude-dirs = /data/detikcom/baru/static/rating, /data/detikcom/baru/static/fotoevent
+queue-threshold-time = 30
+max-queued-items = 100
+triggers = mod_webio
+
+[indeks]
+watch-dirs = /data/detikcom/baru/xml/news/indeksberita/{year}/{month}, /data/detikcom/baru/xml/news/indeksberita/{year}/{month.minus1}
+queue-threshold-time = 10
+max-queued-items = 30
+triggers = mod_webio
+
+# excluded from static watch
+
+# [fotoevent]
+# watch-dirs = /data/detikcom/baru/static/fotoevent
+# queue-threshold-time = 10
+# max-queued-items = 30
+# triggers = mod_webio
+
+[rating]
+watch-dirs = /data/detikcom/baru/static/rating
+queue-threshold-time = 10
+max-queued-items = 30
+triggers = mod_webio
+
+[ratingfull]
+watch-dirs = /data/detikcom/baru/static/ratingfull/{year}/{month}/{day}, /data/detikcom/baru/static/ratingfull/{year}/{month}/{day.minus1}
+queue-threshold-time = 60
+max-queued-items = 100
+triggers = mod_webio
+
+# no need to be short update (sinkron xml)
+
+[xml]
+watch-dirs = /data/detikcom/baru/xml/abg, /data/detikcom/baru/xml/datafinance, /data/detikcom/baru/xml/event, /data/detikcom/baru/xml/zodiak, /data/detikcom/baru/xml/news/quiz, /data/detikcom/baru/xml/agenda, /data/detikcom/baru/xml/detikforum, /data/detikcom/baru/xml/aci, /data/detikcom/baru/xml/search, /data/detikcom/baru/xml/news/paging
+queue-threshold-time = 120
+max-queued-items = 100
+triggers = mod_webio
+
+[xml2]
+watch-dirs =  /data/detikcom/baru/xml/wolipop, /data/detikcom/baru/xml/konsultasi
+queue-threshold-time = 120
+max-queued-items = 1000
+triggers = mod_webionodel
+
+[detiktv]
+watch-dirs = /data/detikcom/baru/xml/detiktv
+queue-threshold-time = 10
+max-queued-items = 30
+triggers = mod_webio
+
+[news other]
+watch-dirs = /data/detikcom/baru/xml/news/other
+queue-threshold-time = 10
+max-queued-items = 30
+triggers = mod_webio
+
+# sinkron img
+[img content other]
+watch-dirs = /data/detikcom/baru/images/content/blog, /data/detikcom/baru/images/content/detikmusic, /data/detikcom/baru/images/content/polling, /data/detikcom/baru/images/content/other, /data/detikcom/baru/images/content/detikshop, /data/detikcom/baru/images/content/tanyasaja, /data/detikcom/baru/images/content/koki, /data/detikcom/baru/images/content/detikfood, /data/detikcom/baru/images/content/forum, /data/detikcom/baru/images/content/blogdetik, /data/detikcom/baru/images/content/quiz, /data/detikcom/baru/images/content/detikmovie, /data/detikcom/baru/images/content/survey
+queue-threshold-time = 10
+max-queued-items = 30
+triggers = mod_webio
+
+# sinkron other
+[other other]
+watch-dirs = /data/detikcom/baru/tpl, /data/detikcom/baru/misc, /data/detikcom/baru/images/abg, /data/detikcom/baru/images/tpl, /data/detikcom/baru/images/detikcom, /data/detikcom/baru/images/video/{year}/{month}
+queue-threshold-time = 10
+max-queued-items = 30
+triggers = mod_webio
+
+# non standard 2
+[nonstandard2]
+watch-dirs = /data/detikcom/baru/xml/detikcom/tpl/klasemen, /data/detikcom/baru/xml/detikcom/tpl/table
+queue-threshold-time = 10
+max-queued-items = 30
+triggers = mod_webio2
+
+# non standard 3
+[nonstandard3]
+watch-dirs = /data/detikcom/baru/tpl/polling, /data/detikcom/baru/tpl/survey
+queue-threshold-time = 10
+max-queued-items = 30
+triggers = mod_webio3
+

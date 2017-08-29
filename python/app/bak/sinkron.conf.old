@@ -1,0 +1,7 @@
+[static]
+src-root-dir = /data/detikcom/baru
+dst-root-dirs = http://glustervm:10101/
+include-dirs =  static, ads
+exclude-dirs = static/ratingfull
+queue-threshold-time = 15 ;in seconds
+max-queued-items = 30 ;number of queued items

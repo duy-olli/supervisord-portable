@@ -1,0 +1,26 @@
+==================
+ nullfs CHANGELOG
+==================
+
+0.0.4 (2008-08-06)
+- added kerneldoc (mostly placeholders)
+- added d_compare dentry hook
+- added d_delete dentry hook for completeness (not used)
+- added d_iput dentry hook for completeness (not used)
+- added d_dname dentry hook for completeness (not used)
+- updated for 2.6.26 inode API
+
+0.0.3 (2008-05-17)
+- added missing copyrights
+- massive code reformatting to fit Linux style
+- lock parent inode before making changes
+
+
+0.0.2 (2008-04-27)
+- changed to support Linux 2.6.25
+- release root items when initial interpose fails
+
+
+0.0.1 (2008-04-23)
+- the first public posting of nullfs
+

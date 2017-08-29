@@ -1,0 +1,332 @@
+#!/opt/python/bin/python
+
+import pyinotify, asyncore, multiprocessing, time, ConfigParser, sys, os, string, hashlib, setproctitle
+from trigger import Trigger
+
+watch_mask = pyinotify.IN_CREATE | pyinotify.IN_DELETE | pyinotify.IN_MODIFY | pyinotify.IN_MOVED_TO | pyinotify.IN_MOVED_FROM
+
+# ex: num(10).minus5 ; num(10).plus5
+class num(object):
+        def __init__(self, val, digit=0):
+                self.value = val
+		self.digit = digit
+        def __getattr__(self, name):
+                if name.startswith('plus') and name[4:].isdigit():
+                        return self.digit and string.rjust(str(self.value + int(name[4:])), self.digit, '0') or str(self.value + int(name[4:]))
+                elif name.startswith('minus') and name[5:].isdigit():
+                        return self.digit and string.rjust(str(self.value - int(name[5:])), self.digit, '0') or str(self.value - int(name[5:]))
+                else:
+                        return self.digit and string.rjust(str(self.value), self.digit, '0') or str(self.value)
+        def __str__(self):
+                return self.digit and string.rjust(str(self.value), self.digit, '0') or str(self.value)
+
+def arrange_event_list(pathname, attribute, watch_list):
+	"""
+	prev => curr
+	c => c (not replaced); d (remove from watch list); m (not replaced); r (add new pathname to watch list, mark as 'c'; remove old pathname from watch list)
+	m => c (not happening); d (replaced); m (not replaced); r (replaced)
+	d => c (replaced); d (not happening); m (mark as 'c'); r (not happening)
+	r => c (mark old pathname as 'c', new pathname as 'c'); d (not happening); m (not happening); r (not happening)
+	"""
+
+	if not watch_list.has_key(pathname):
+		watch_list[pathname] = attribute
+		return True
+	
+	if watch_list[pathname]['op'] == 'c':
+		if attribute['op'] == 'd': watch_list.pop(pathname)
+		elif attribute['op'] == 'r': 
+			watch_list[attribute['new_path']] =  { 'op': 'c', 'ts': attribute['ts'] }
+			watch_list.pop(pathname)
+	elif watch_list[pathname]['op'] == 'm' and attribute['op'] in ['d','r']:
+		watch_list[pathname] = attribute
+
+	elif watch_list[pathname]['op'] == 'd' and attribute['op'] in ['c','m']:
+		watch_list[pathname] = { 'op': 'c', 'ts': attribute['ts'] }
+
+	elif watch_list[pathname]['op'] == 'r' and attribute['op'] == 'c':
+		newpathname = watch_list[pathname]['new_path']
+		if not watch_list.has_key(newpathname): watch_list[newpathname] = { 'op': 'c', 'ts': watch_list[pathname]['ts'] }
+		watch_list[pathname]['op'] = { 'op': 'c', 'ts': attribute['ts'] }
+
+	else:
+		return False
+
+	return True
+
+def do_operation(item, section, digest_list, watch_list, lock_watch_list):
+	pathname, attribute = item
+	modified = False
+	data = None
+	global mod_instances
+
+	# TODO: now it's only modified or created list
+	if attribute['op'] in ['c', 'm']:
+		if os.path.islink(pathname):
+			modified = True
+		elif os.path.isfile(pathname):
+			data = open(pathname,'rb').read()
+			new_digest = hashlib.md5(data).hexdigest()
+			if not digest_list.has_key(pathname):
+				digest_list[pathname] = { 'digest': new_digest, 'ts': attribute['ts'] }
+				modified = True
+			else:
+				if digest_list[pathname]['digest'] != new_digest:
+					digest_list[pathname] = { 'digest': new_digest, 'ts': attribute['ts'] }
+					modified = True
+		elif os.path.isdir(pathname):
+			modified = True	
+		else:
+			pass # maybe already deleted or renamed, put it to next list
+
+		if modified:
+			if attribute['ts'] == watch_list[pathname]['ts']:
+				lock_watch_list.acquire()
+				watch_list.pop(pathname)
+				lock_watch_list.release()
+			for trigger in section['triggermod']:
+				mod_instances[trigger].on_modified(pathname, data)
+	
+	elif attribute['op'] == 'd':
+		if digest_list.has_key(pathname):
+			digest_list.pop(pathname)
+		
+		if attribute['ts'] == watch_list[pathname]['ts']:
+			lock_watch_list.acquire()
+			watch_list.pop(pathname)
+			lock_watch_list.release()
+		for trigger in section['triggermod']:
+			mod_instances[trigger].on_deleted(pathname)
+
+	elif attribute['op'] == 'r':
+		if digest_list.has_key(pathname):
+			attr = digest_list.pop(pathname)
+			digest_list[attribute['new_path']] = attr
+
+		if attribute['ts'] == watch_list[pathname]['ts']:
+			lock_watch_list.acquire()
+			watch_list.pop(pathname)
+			lock_watch_list.release()	
+		for trigger in section['triggermod']:
+			mod_instances[trigger].on_renamed(pathname, attribute['new_path'])
+
+max_queue_default = 15 # default 15 items queued
+max_interval_default = 60 # default 60 seconds
+max_digest_list = 1000 
+max_removed_items = 10 # for digest list
+max_workers = 10
+
+def consume_queue(queue, watch_list, lock_watch_list, max_queue, max_interval):
+	global first_item_ts
+		
+	try:
+		pathname, attribute = queue.get(timeout=1)
+		updated = True
+		if not first_item_ts: first_item_ts = attribute['ts']
+	except Exception:
+		updated = False
+		
+	worker_triggered = False
+	if updated:
+		lock_watch_list.acquire() 
+		arrange_event_list(pathname, attribute, watch_list) 
+		lock_watch_list.release()
+
+	if len(watch_list) >= max_queue:
+		worker_triggered = True
+	if first_item_ts and time.time() - first_item_ts >= max_interval:
+		worker_triggered = True
+
+	return worker_triggered
+
+def watcher(queue, section):
+	global digest_list, first_item_ts
+	manager = multiprocessing.Manager()
+	digest_list = manager.dict()
+	watch_list = manager.dict()
+	max_queue = section['mqi'] or max_queue_default
+	max_interval = section['qtt'] or max_interval_default
+	setproctitle.setproctitle(sys.argv[0] + ':watcher')
+	first_item_ts = 0
+	lock_watch_list = multiprocessing.Lock()
+	while True:
+		worker_triggered = consume_queue(queue, watch_list, lock_watch_list, max_queue, max_interval)
+
+		if worker_triggered:
+			first_item_ts = 0
+			ordered_event_list = sorted(watch_list.items(), key=lambda x:x[1]['ts'])
+			for item in ordered_event_list:
+				if os.path.isdir(item[0]) or item[1]['op'] =='r':
+					# directory or rename operation must be done sequentially
+					do_operation(item, section, digest_list, watch_list, lock_watch_list)
+				else:
+					worker = multiprocessing.Process(target=do_operation, args=(item, section, digest_list, watch_list, lock_watch_list))
+					worker.start()
+					while len(multiprocessing.active_children()) > max_workers:
+						consume_queue(queue, watch_list, lock_watch_list, max_queue, max_interval)
+
+			# TODO: performance penalty
+			while len(multiprocessing.active_children()) > 1: 
+				consume_queue(queue, watch_list, lock_watch_list, max_queue, max_interval)
+		
+			# if max(digest list) => remove n least recently digests (n = max_removed_items) 
+			if len(digest_list) >= max_digest_list:
+				ts_ordered_digest = sorted(digest_list.items(), key=lambda x:x[1]['ts'])
+				for item in ts_ordered_digest[:max_removed_items]:
+					digest_list.pop(item[0])
+			
+class EventHandler(pyinotify.ProcessEvent):
+	def __init__(self, watch_queue):
+		self.watch_queue = watch_queue
+
+	def process_IN_CREATE(self, event):
+		self.watch_queue.put([event.pathname, { 'op': 'c', 'ts': time.time() }])
+
+	def process_IN_MODIFY(self, event):
+		self.watch_queue.put([event.pathname, { 'op': 'm', 'ts': time.time() }])
+
+	def process_IN_DELETE(self, event):
+		self.watch_queue.put([event.pathname, { 'op': 'd', 'ts': time.time() }])
+
+	def process_IN_MOVED_TO(self, event):
+		self.watch_queue.put([event.src_pathname, { 'op': 'r', 'ts': time.time(), 'new_path': event.pathname }])
+
+date = ('{year}', '{month}', '{day}', '{hour}', '{minute}', '{second}')
+
+def small_idx_date(text):
+	idx = len(date) - 1
+	while text.find(date[idx]) == -1 and idx > -1: idx-=1
+	return idx
+
+def substitute_date(text, date):
+	return text.format(year=num(date[0]), month=num(date[1],2), day=num(date[2],2), hour=num(date[3],2), minute=num(date[4],2), second=num(date[5],2))
+
+def tuple_date(seconds = time.time()):
+	Ynow, Mnow, Dnow, hnow, mnow, snow, x, x, x = time.localtime(seconds)
+	return [Ynow, Mnow, Dnow, hnow, mnow, snow, 0,0,0]
+
+def next_seconds(tnow, idx, inc = 1):
+	now = list(tnow)
+	for zeroidx in range(idx+1,6): now[zeroidx] = 0
+	now[idx] += inc
+	return time.mktime(now)
+
+def watch_section_job(section_name, section):
+	setproctitle.setproctitle(sys.argv[0] + ':' + section_name)
+	# process to consume items from this producer
+	watch_queue = multiprocessing.Queue()
+	watchjob = multiprocessing.Process(target=watcher, args=(watch_queue,section,))
+	watchjob.start()
+
+	wm = pyinotify.WatchManager()
+	notifier = pyinotify.AsyncNotifier(wm, EventHandler(watch_queue), timeout=10)
+	
+	exclude = pyinotify.ExcludeFilter(section['exclude'])
+	template = {} # [small index date, next triggered seconds, wdd]
+	for include_dir in section['include']:
+		key = include_dir
+		template[key] = [0,0,None]
+		template[key][0] = small_idx_date(include_dir)
+		if template[key][0] > -1:
+			now = tuple_date()
+			template[key][1] = next_seconds(now, template[key][0])
+			include_dir = substitute_date(include_dir, now)
+		if not os.path.exists(include_dir): continue
+		template[key][2] = wm.add_watch(include_dir, watch_mask, rec=True, auto_add=True, exclude_filter=exclude)
+
+	next_trigger = min(map(lambda x: template[x][1], template))
+	while True:
+		notifier.process_events()
+		while notifier.check_events():
+			notifier.read_events()
+			notifier.process_events()
+		
+		# check for updated watch
+		if next_trigger and time.time() >= next_trigger:
+			# update watch
+			for include_dir in section['include']:
+				key = include_dir
+				if template[key][1] != next_trigger: continue	
+				now = tuple_date(next_trigger)
+				template[key][1] = next_seconds(now, template[key][0])
+				next_trigger = min(map(lambda x: template[x][1], template))
+				wm.rm_watch(template[key][2].values(), rec=True)
+				include_dir = substitute_date(include_dir, now)
+				template[key][2] = wm.add_watch(include_dir, watch_mask, rec=True, auto_add=True, exclude_filter=exclude)	
+
+	watchjob.join()
+
+def read_config():
+	cfg = ConfigParser.ConfigParser()
+	cfg.read("insync.conf")
+	tmp_sections = {}
+	for section in cfg.sections():
+		tmp_sections[section] = {}
+		for item in cfg.items(section):
+			if item[1] is None: continue
+			if item[1].find(',') >= 0: # split for multivalue
+				val = map(lambda x:x.strip(), item[1].split(','))
+			else:
+				val = item[1]
+			tmp_sections[section][item[0]] = val
+
+		if not tmp_sections[section].has_key('watch-dirs') and not tmp_sections[section].has_key('module'): 
+			tmp_sections.pop(section)
+	
+	watch_sections = {}
+	module_sections = {}
+	# watch_sections => section => {watchdirs[], exclude[], qtt, mqi, modules[]}
+	# module_sections => section => {params}
+	for section in tmp_sections:
+		if tmp_sections[section].has_key('module'):
+			if os.path.exists(tmp_sections[section]['module'] + '.py'): 
+				module_sections[section] = tmp_sections[section]
+			continue
+
+		if tmp_sections[section].has_key('queue-threshold-time'):
+			qtt = int(tmp_sections[section]['queue-threshold-time'])
+		else: qtt = 0
+
+		if tmp_sections[section].has_key('max-queued-items'):
+			mqi = int(tmp_sections[section]['max-queued-items'])
+		else: mqi = 0
+
+		if not tmp_sections[section].has_key('exclude-dirs'): 
+			exc_dirs = []
+		else:
+			exc_dirs = map(lambda x: '^' + x + '.*', tmp_sections[section]['exclude-dirs'])
+		
+		inc_dirs = tmp_sections[section]['watch-dirs']
+		if not type(inc_dirs) is list: inc_dirs = [inc_dirs]
+		triggers = tmp_sections[section]['triggers']
+		if not type(triggers) is list: triggers = [triggers]
+		watch_sections[section] = { 'include': inc_dirs, 'exclude': exc_dirs, 'qtt': qtt, 'mqi': mqi, 'triggermod': triggers}
+	
+	return watch_sections, module_sections
+
+mod_instances = {} # instances of module object per section
+
+if __name__ == "__main__":
+	watch_sections, module_sections = read_config()
+	
+	setproctitle.setproctitle(sys.argv[0])
+	os.chdir('/opt/python/app')
+	sys.path.append('/opt/python/app')
+	modules = {}
+	for section in module_sections:
+		# initialize modules
+		modname = module_sections[section]['module']
+		if not modname in modules: 
+			module = __import__(modname)
+			if issubclass(module.__dict__[modname], Trigger):
+				modules[modname] = module.__dict__[modname]
+		params = dict(filter(lambda x:x[0] != 'module', module_sections[section].items()))
+		mod_instances[section] = modules[modname](params) # instantiate module object
+	
+	for section in watch_sections:
+		# each section takes one process
+		wsjob = multiprocessing.Process(target=watch_section_job, args=(section, watch_sections[section],))
+		wsjob.start()
+
+	while multiprocessing.active_children():
+		time.sleep(1)
